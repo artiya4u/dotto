@@ -1,43 +1,46 @@
 pragma solidity ^0.4.18;
 
-import "./Ownable.sol";
+import "zeppelin-solidity/contracts/ownership/Ownable.sol";
 
 contract Dotto is Ownable {
-  bool public isStarted;
+  bool public canJoin;
   uint256 public fee;
   uint256 public prize;
   mapping(address => Submission) public submissions;
+  mapping(bytes32 => address) public pickedNumberHashes;
   address[] public validParticipant;
+  uint32 public round;
 
   struct Submission {
-    uint8 pickedNumber;
+    uint256 pickedNumber;
     bytes32 pickedNumberHash;
-    uint8 v;
-    bytes32 r;
-    bytes32 s;
   }
 
-  function Dotto(){
+  constructor() public {
     fee = 0;
     prize = 0;
-    isStarted = false;
+    canJoin = false;
   }
 
-  function startJoin(uint256 _fee, uint256 _prize) onlyOwner external {
+  event Hash(bytes32 hash1, bytes32 hash2);
+
+  function openJoin(uint256 _fee, uint256 _prize) onlyOwner external {
+    require(!canJoin);
     fee = _fee;
     prize = _prize;
-    isStarted = true;
+    canJoin = true;
+    round++;
   }
 
-  function startJoin() onlyOwner external {
-    isStarted = false;
+  function closeJoin() onlyOwner external {
+    require(canJoin);
+    canJoin = false;
   }
 
   function distributePrize() onlyOwner external {
     uint256[] numbers;
     for (uint i = 0; i < validParticipant.length; i++) {
       numbers.push(submissions[validParticipant[i]].pickedNumber);
-
     }
 
     uint256 rand = xorAll(numbers);
@@ -46,46 +49,33 @@ contract Dotto is Ownable {
     luckyAddress.transfer(prize);
   }
 
-  function join(
-    bytes32 pickedNumberHash,
-    uint8 v,
-    bytes32 r,
-    bytes32 s) payable external {
+  function join(bytes32 pickedNumberHash) payable external {
+    require(canJoin);
+    require(msg.value == fee);
+    require(pickedNumberHashes[pickedNumberHash] == address(0));
+    pickedNumberHashes[pickedNumberHash] = msg.sender;
     submissions[msg.sender] = Submission({
       pickedNumber : 0,
-      pickedNumberHash : pickedNumberHash,
-      v : v,
-      r : r,
-      s : s
+      pickedNumberHash : pickedNumberHash
       });
-    require(isStarted);
-    require(msg.value == fee);
   }
 
-  function reveal(uint64 pickedNumber) external {
-    require(!isStarted);
+  function reveal(uint256 _pickedNumber) external {
+    require(!canJoin);
     Submission storage sub = submissions[msg.sender];
-    require(isValidNumber(pickedNumber, msg.sender, sub.pickedNumberHash, sub.v, sub.r, sub.s));
+    sub.pickedNumber = _pickedNumber;
+    require(_isValidNumber(sub));
     validParticipant.push(msg.sender);
   }
 
-  function isValidNumber(
-    uint64 pickedNumber,
-    address sender,
-    bytes32 hash,
-    uint8 v,
-    bytes32 r,
-    bytes32 s)
-  public
+  function _isValidNumber(Submission sub)
+  internal
   constant
   returns (bool)
   {
-    return sender == ecrecover(
-      keccak256(abi.encodePacked(pickedNumber, hash)),
-      v,
-      r,
-      s
-    );
+    bytes32 hash = keccak256(bytes32(sub.pickedNumber));
+    emit Hash(sub.pickedNumberHash, hash);
+    return sub.pickedNumberHash == hash;
   }
 
   function xorAll(uint256[] memory _data) public pure returns (uint256 o_sum) {
